@@ -258,6 +258,41 @@
             border-bottom: 2px solid #5A4E4D !important;
             box-shadow: none !important;
         }
+
+        @keyframes fallSnow {
+            0% {
+                transform: translateY(-20px) translateX(0);
+                opacity: 0;
+            }
+
+            10% {
+                opacity: 0.8;
+            }
+
+            90% {
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: translateY(100vh) translateX(var(--drift, 10px));
+                opacity: 0;
+            }
+        }
+
+        @keyframes lightningFlash {
+
+            0%,
+            95%,
+            98%,
+            100% {
+                opacity: 0;
+            }
+
+            96%,
+            97% {
+                opacity: 0.25;
+            }
+        }
     </style>
 </head>
 
@@ -348,33 +383,73 @@
             );
         }
 
-        // 全局下雨動畫組件
-        function RainEffect() {
-            const [drops, setDrops] = useState([]);
+        // 全局天氣/降水動畫組件
+        function RainEffect({ weatherType }) {
+            const [particles, setParticles] = useState([]);
 
             useEffect(() => {
-                const newDrops = Array.from({ length: 40 }).map((_, i) => ({
+                let count = 0;
+                let type = 'rain'; // 'rain' or 'snow'
+                if (['rain', 'thunderstorm', 'drizzle'].includes(weatherType)) {
+                    count = weatherType === 'thunderstorm' ? 60 : 30;
+                    type = 'rain';
+                } else if (weatherType === 'snow') {
+                    count = 25;
+                    type = 'snow';
+                } else {
+                    count = 0; // 晴天/多雲/陰天/有霧無降水
+                }
+
+                const newParticles = Array.from({ length: count }).map((_, i) => ({
                     id: i,
                     left: Math.random() * 100,
-                    duration: 0.5 + Math.random() * 0.8,
+                    duration: type === 'rain' ? (0.5 + Math.random() * 0.8) : (3.0 + Math.random() * 2.0),
                     delay: Math.random() * 2,
+                    size: type === 'rain' ? 8 : (6 + Math.random() * 4),
+                    drift: (Math.random() - 0.5) * 40,
                 }));
-                setDrops(newDrops);
-            }, []);
+                setParticles(newParticles);
+            }, [weatherType]);
+
+            if (particles.length === 0) return null;
 
             return (
                 <div className="rain-container">
-                    {drops.map(drop => (
-                        <div
-                            key={drop.id}
-                            className="raindrop"
-                            style={{
-                                left: `${drop.left}%`,
-                                animationDuration: `${drop.duration}s`,
-                                animationDelay: `${drop.delay}s`
-                            }}
-                        />
-                    ))}
+                    {weatherType === 'thunderstorm' && (
+                        <div className="absolute inset-0 bg-white pointer-events-none z-50 mix-blend-overlay animate-[lightningFlash_6s_infinite]" />
+                    )}
+                    {particles.map(p => {
+                        const isSnow = weatherType === 'snow';
+                        if (isSnow) {
+                            return (
+                                <div
+                                    key={p.id}
+                                    className="absolute bg-white rounded-full opacity-80"
+                                    style={{
+                                        left: `${p.left}%`,
+                                        width: `${p.size}px`,
+                                        height: `${p.size}px`,
+                                        top: '-20px',
+                                        animation: `fallSnow ${p.duration}s linear infinite`,
+                                        animationDelay: `${p.delay}s`,
+                                        '--drift': `${p.drift}px`
+                                    }}
+                                />
+                            );
+                        } else {
+                            return (
+                                <div
+                                    key={p.id}
+                                    className="raindrop"
+                                    style={{
+                                        left: `${p.left}%`,
+                                        animationDuration: `${p.duration}s`,
+                                        animationDelay: `${p.delay}s`
+                                    }}
+                                />
+                            );
+                        }
+                    })}
                 </div>
             );
         }
@@ -382,13 +457,18 @@
 
 
         // 實景地圖組件
-        function LeafletMap({ collectedElfs = [], onCollectElf }) {
+        function LeafletMap({ collectedElfs = [], onCollectElf, collectedWaterDrops = [], onCollectWaterDrop }) {
             const mapRef = useRef(null);
             const collectedElfsRef = useRef(collectedElfs);
+            const collectedWaterDropsRef = useRef(collectedWaterDrops);
 
             useEffect(() => {
                 collectedElfsRef.current = collectedElfs;
             }, [collectedElfs]);
+
+            useEffect(() => {
+                collectedWaterDropsRef.current = collectedWaterDrops;
+            }, [collectedWaterDrops]);
 
             useEffect(() => {
                 window.collectElf = (file) => {
@@ -396,10 +476,16 @@
                         onCollectElf(file);
                     }
                 };
+                window.collectWaterDrop = (index) => {
+                    if (onCollectWaterDrop) {
+                        onCollectWaterDrop(index);
+                    }
+                };
                 return () => {
                     delete window.collectElf;
+                    delete window.collectWaterDrop;
                 };
-            }, [onCollectElf]);
+            }, [onCollectElf, onCollectWaterDrop]);
 
             useEffect(() => {
                 if (!mapRef.current) return;
@@ -504,17 +590,39 @@
                         currentDrop.setLatLng(newLatLng);
 
                         const distance = map.distance(playerLatLng, newLatLng);
+                        const isCollected = collectedWaterDropsRef.current.includes(k);
                         let popupContent = "";
-                        if (distance <= 100) {
-                            popupContent = `<span style="font-size: 14px;">💧 <b>虛擬水分子編號 ${k + 1}</b></span><br>` +
-                                `距離您：${Math.round(distance)} 公尺<br>` +
-                                `<span style="color: #61b15a; font-weight: bold;">【已進入收集範圍！】</span><br>` +
-                                `恭喜獲得『大雅小麥』療癒種子 1 顆！`;
+
+                        if (isCollected) {
+                            popupContent = `
+                                <div style="text-align: center; font-family: 'PingFang TC', sans-serif;">
+                                    <span style="font-size: 14px; font-weight: bold; color: #5A4E4D;">💧 <b>虛擬水分子編號 ${k + 1}</b></span><br>
+                                    <span style="color: #61b15a; font-weight: bold;">【已收集完成】</span>
+                                </div>
+                            `;
+                        } else if (distance <= 100) {
+                            popupContent = `
+                                <div style="text-align: center; font-family: 'PingFang TC', sans-serif; min-width: 150px;">
+                                    <span style="font-size: 14px; font-weight: bold; color: #5A4E4D;">💧 <b>虛擬水分子編號 ${k + 1}</b></span><br>
+                                    <span style="font-size: 12px;">距離您：<b>${Math.round(distance)}</b> 公尺</span><br>
+                                    <span style="color: #61b15a; font-weight: bold; font-size: 12px;">【已進入收集範圍！】</span><br>
+                                    <button onclick="window.collectWaterDrop(${k})" 
+                                            style="margin-top: 6px; padding: 4px 10px; background-color: #E8DCC4; color: #5A4E4D; border: 2px solid #5A4E4D; font-weight: bold; cursor: pointer; border-radius: 6px; font-size: 12px; box-shadow: 1px 2px 0px rgba(90, 78, 77, 0.6);"
+                                            onmouseover="this.style.backgroundColor='#F1E8D5'" 
+                                            onmouseout="this.style.backgroundColor='#E8DCC4'">
+                                        👉 點擊收集
+                                    </button>
+                                </div>
+                            `;
                         } else {
-                            popupContent = `<span style="font-size: 14px;">💧 <b>虛擬水分子編號 ${k + 1}</b></span><br>` +
-                                `距離您：${Math.round(distance)} 公尺<br>` +
-                                `<span style="color: #99aab5;">【距離太遠無法收集】</span><br>` +
-                                `請試著往我的方向走過來吧！`;
+                            popupContent = `
+                                <div style="text-align: center; font-family: 'PingFang TC', sans-serif; min-width: 150px;">
+                                    <span style="font-size: 14px; font-weight: bold; color: #5A4E4D;">💧 <b>虛擬水分子編號 ${k + 1}</b></span><br>
+                                    <span style="font-size: 12px;">距離您：<b>${Math.round(distance)}</b> 公尺</span><br>
+                                    <span style="color: #99aab5; font-size: 12px;">【距離太遠無法收集】</span><br>
+                                    <p style="margin: 4px 0 0; font-size: 11px; opacity: 0.8;">請走近至 100 公尺以內進行收集！</p>
+                                </div>
+                            `;
                         }
                         currentDrop.setPopupContent(popupContent);
                     }
@@ -2942,7 +3050,7 @@
             );
         }
 
-        function PublicSpace({ nickname, finalParts = {} }) {
+        function PublicSpace({ nickname, finalParts = {}, realWeather }) {
             const [activeTab, setActiveTab] = useState('realmap');
             const [showFeatures, setShowFeatures] = useState(false);
             const [showTreeHole, setShowTreeHole] = useState(false);
@@ -2952,107 +3060,35 @@
             const [toastMessage, setToastMessage] = useState('');
             const [showPlanting, setShowPlanting] = useState(false);
 
-            // Real weather state
-            const [realWeather, setRealWeather] = useState({
-                city: '未知地區',
-                temp: '--',
-                desc: '定位中...',
-                icon: '🔍',
-                loading: true,
-                error: false
+            // 虛擬水分子收集狀態
+            const [collectedWaterDrops, setCollectedWaterDrops] = useState(() => {
+                const saved = safeStorage.getItem('collectedWaterDrops', '[]');
+                try {
+                    return JSON.parse(saved);
+                } catch (e) {
+                    return [];
+                }
             });
 
             useEffect(() => {
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        async (position) => {
-                            const { latitude, longitude } = position.coords;
-                            try {
-                                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&timezone=auto`);
-                                const weatherData = await weatherRes.json();
-
-                                let cityName = '未知地區';
-                                try {
-                                    const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10`, {
-                                        headers: {
-                                            'Accept-Language': 'zh-TW,zh;q=0.9'
-                                        }
-                                    });
-                                    const geoData = await geoRes.json();
-                                    cityName = geoData.address.city || geoData.address.town || geoData.address.suburb || geoData.address.district || geoData.address.county || '您的位置';
-                                } catch (e) {
-                                    console.error("Reverse geocode failed", e);
-                                    cityName = `經度:${longitude.toFixed(2)} 緯度:${latitude.toFixed(2)}`;
-                                }
-
-                                const code = weatherData.current_weather.weathercode;
-                                const temp = Math.round(weatherData.current_weather.temperature);
-
-                                let desc = '陰天';
-                                let icon = '☁️';
-                                if (code === 0) { desc = '晴天'; icon = '☀️'; }
-                                else if (code >= 1 && code <= 3) { desc = '多雲時晴'; icon = '🌤️'; }
-                                else if (code === 45 || code === 48) { desc = '有霧'; icon = '🌫️'; }
-                                else if ((code >= 51 && code <= 55) || (code >= 80 && code <= 82)) { desc = '陣雨'; icon = '🌧️'; }
-                                else if (code >= 61 && code <= 65) { desc = '雨天'; icon = '🌧️'; }
-                                else if (code >= 71 && code <= 77) { desc = '下雪'; icon = '❄️'; }
-                                else if (code >= 95 && code <= 99) { desc = '雷雨'; icon = '⛈️'; }
-
-                                setRealWeather({
-                                    city: cityName,
-                                    temp: temp,
-                                    desc: desc,
-                                    icon: icon,
-                                    loading: false,
-                                    error: false
-                                });
-                            } catch (err) {
-                                console.error("Fetch weather failed", err);
-                                setRealWeather({
-                                    city: '未知地區',
-                                    temp: '22',
-                                    desc: '天氣資料讀取失敗 (預設台北雨天)',
-                                    icon: '🌧️',
-                                    loading: false,
-                                    error: true
-                                });
-                            }
-                        },
-                        (error) => {
-                            console.error("Geolocation failed", error);
-                            setRealWeather({
-                                city: '未知地區',
-                                temp: '22',
-                                desc: '定位遭拒 (預設台北雨天)',
-                                icon: '🌧️',
-                                loading: false,
-                                error: true
-                            });
-                        },
-                        { enableHighAccuracy: true, timeout: 8000 }
-                    );
-                } else {
-                    setRealWeather({
-                        city: '未開定位',
-                        temp: '22',
-                        desc: '瀏覽器不支援定位 (預設台北雨天)',
-                        icon: '🌧️',
-                        loading: false,
-                        error: true
-                    });
-                }
-            }, []);
+                safeStorage.setItem('collectedWaterDrops', JSON.stringify(collectedWaterDrops));
+            }, [collectedWaterDrops]);
 
             // 背包中種子的數量狀態
             const [backpackItems, setBackpackItems] = useState(() => {
                 const defaultItems = {
                     seed_cotton: 3,
                     seed_lavender: 5,
-                    seed_hydrangea: 2
+                    seed_hydrangea: 2,
+                    seed_wheat: 0
                 };
                 const saved = safeStorage.getItem('backpack_items', JSON.stringify(defaultItems));
                 try {
-                    return JSON.parse(saved);
+                    const parsed = JSON.parse(saved);
+                    if (parsed.seed_wheat === undefined) {
+                        parsed.seed_wheat = 0;
+                    }
+                    return parsed;
                 } catch (e) {
                     return defaultItems;
                 }
@@ -3197,6 +3233,25 @@
                 const elfName = elf ? elf.name : '新天氣精靈';
 
                 setToastMessage(`恭喜！成功蒐集到了「${elfName}」！已收錄至圖鑑`);
+                setTimeout(() => setToastMessage(''), 3000);
+            };
+
+            const handleCollectWaterDrop = (index) => {
+                if (collectedWaterDrops.includes(index)) return;
+
+                const newCollected = [...collectedWaterDrops, index];
+                setCollectedWaterDrops(newCollected);
+
+                setBackpackItems(prev => {
+                    const next = {
+                        ...prev,
+                        seed_wheat: (prev.seed_wheat || 0) + 1
+                    };
+                    safeStorage.setItem('backpack_items', JSON.stringify(next));
+                    return next;
+                });
+
+                setToastMessage("恭喜！成功收集虛擬水分子，獲得『大雅小麥』療癒種子 1 顆！");
                 setTimeout(() => setToastMessage(''), 3000);
             };
 
@@ -3407,7 +3462,8 @@
                                                 {backpackTab === "seeds" && [
                                                     { id: "seed_cotton", image: "./item/cotton.png", name: "棉花", desc: "蓬鬆溫暖的棉花，可以收穫柔軟的棉絮製作保暖織物。", action: "放入樹洞" },
                                                     { id: "seed_lavender", image: "./item/lavender.png", name: "薰衣草", desc: "散發迷人淡雅香氣的薰衣草，具有舒緩身心與助眠的效果。", action: "放入樹洞" },
-                                                    { id: "seed_hydrangea", image: "./item/flower.png", name: "繡球花", desc: "色彩繽紛的繡球花，會隨泥土酸鹼值改變花瓣顏色，極具觀賞價值。", action: "放入樹洞" }
+                                                    { id: "seed_hydrangea", image: "./item/flower.png", name: "繡球花", desc: "色彩繽紛的繡球花，會隨泥土酸鹼值改變花瓣顏色，極具觀賞價值。", action: "放入樹洞" },
+                                                    { id: "seed_wheat", image: "./item/wheat.png", name: "大雅小麥", desc: "在大雅微雨中茁壯的小麥，具有驚人的治癒力，可以收成金黃小麥。", action: "放入樹洞" }
                                                 ].map(item => {
                                                     const count = backpackItems[item.id] !== undefined ? backpackItems[item.id] : 0;
                                                     return (
@@ -3563,14 +3619,19 @@
 
                         {activeTab === 'plaza' && (
                             <>
-                                <PlazaScene />
+                                <PlazaScene realWeather={realWeather} />
                                 {/* removed translucent overlay as requested */}
                             </>
                         )}
 
                         {activeTab === 'realmap' && (
                             <div className="absolute inset-x-2 md:inset-x-4 top-20 bottom-32 z-10">
-                                <LeafletMap collectedElfs={collectedElfs} onCollectElf={handleCollectElf} />
+                                <LeafletMap
+                                    collectedElfs={collectedElfs}
+                                    onCollectElf={handleCollectElf}
+                                    collectedWaterDrops={collectedWaterDrops}
+                                    onCollectWaterDrop={handleCollectWaterDrop}
+                                />
                             </div>
                         )}
 
@@ -3739,6 +3800,110 @@
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
             const [finalParts, setFinalParts] = useState({});
 
+            // 全局真實氣象狀態
+            const [realWeather, setRealWeather] = useState({
+                city: '未知地區',
+                temp: '--',
+                desc: '定位中...',
+                icon: '🔍',
+                loading: true,
+                error: false,
+                humidity: 75,
+                category: 'rain' // 預設雨天降水
+            });
+
+            useEffect(() => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                            const { latitude, longitude } = position.coords;
+                            try {
+                                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&current=relative_humidity_2m&timezone=auto`);
+                                const weatherData = await weatherRes.json();
+
+                                let cityName = '未知地區';
+                                try {
+                                    const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10`, {
+                                        headers: {
+                                            'Accept-Language': 'zh-TW,zh;q=0.9'
+                                        }
+                                    });
+                                    const geoData = await geoRes.json();
+                                    cityName = geoData.address.city || geoData.address.town || geoData.address.suburb || geoData.address.district || geoData.address.county || '您的位置';
+                                } catch (e) {
+                                    console.error("Reverse geocode failed", e);
+                                    cityName = `經度:${longitude.toFixed(2)} 緯度:${latitude.toFixed(2)}`;
+                                }
+
+                                const code = weatherData.current_weather.weathercode;
+                                const temp = Math.round(weatherData.current_weather.temperature);
+                                const humidity = weatherData.current?.relative_humidity_2m || 75;
+
+                                let desc = '陰天';
+                                let icon = '☁️';
+                                let category = 'cloud';
+
+                                if (code === 0) { desc = '晴天'; icon = '☀️'; category = 'sun'; }
+                                else if (code >= 1 && code <= 3) { desc = '多雲時晴'; icon = '🌤️'; category = 'cloud'; }
+                                else if (code === 45 || code === 48) { desc = '有霧'; icon = '🌫️'; category = 'fog'; }
+                                else if ((code >= 51 && code <= 55) || (code >= 80 && code <= 82)) { desc = '陣雨'; icon = '🌧️'; category = 'drizzle'; }
+                                else if (code >= 61 && code <= 65) { desc = '雨天'; icon = '🌧️'; category = 'rain'; }
+                                else if (code >= 71 && code <= 77) { desc = '下雪'; icon = '❄️'; category = 'snow'; }
+                                else if (code >= 95 && code <= 99) { desc = '雷雨'; icon = '⛈️'; category = 'thunderstorm'; }
+
+                                setRealWeather({
+                                    city: cityName,
+                                    temp: temp,
+                                    desc: desc,
+                                    icon: icon,
+                                    loading: false,
+                                    error: false,
+                                    humidity: humidity,
+                                    category: category
+                                });
+                            } catch (err) {
+                                console.error("Fetch weather failed", err);
+                                setRealWeather({
+                                    city: '未知地區',
+                                    temp: '22',
+                                    desc: '天氣資料讀取失敗 (預設台北雨天)',
+                                    icon: '🌧️',
+                                    loading: false,
+                                    error: true,
+                                    humidity: 75,
+                                    category: 'rain'
+                                });
+                            }
+                        },
+                        (error) => {
+                            console.error("Geolocation failed", error);
+                            setRealWeather({
+                                city: '未知地區',
+                                temp: '22',
+                                desc: '定位遭拒 (預設台北雨天)',
+                                icon: '🌧️',
+                                loading: false,
+                                error: true,
+                                humidity: 75,
+                                category: 'rain'
+                            });
+                        },
+                        { enableHighAccuracy: true, timeout: 8000 }
+                    );
+                } else {
+                    setRealWeather({
+                        city: '未開定位',
+                        temp: '22',
+                        desc: '瀏覽器不支援定位 (預設台北雨天)',
+                        icon: '🌧️',
+                        loading: false,
+                        error: true,
+                        humidity: 75,
+                        category: 'rain'
+                    });
+                }
+            }, []);
+
             useEffect(() => {
                 const audio = document.getElementById('bgMusic');
                 if (audio) {
@@ -3816,7 +3981,7 @@
                 <div className="h-screen w-screen text-primary overflow-hidden font-sans relative">
                     <audio id="bgMusic" src="./item/music/main%20music.mp3" loop autoPlay preload="auto"></audio>
                     <CloudsBackground />
-                    <RainEffect />
+                    <RainEffect weatherType={realWeather.category} />
 
                     {/* 右上角天氣資訊與 75% 亮點已移除 */}
 
@@ -3839,7 +4004,7 @@
 
                         {(step === 'personal' || step === 'public') && (
                             <Layout isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} setStep={setStep} currentStep={step}>
-                                {step === 'personal' ? <PersonalSpace mood={mood} nickname={nickname} finalParts={finalParts} setFinalParts={setFinalParts} /> : <PublicSpace nickname={nickname} finalParts={finalParts} />}
+                                {step === 'personal' ? <PersonalSpace mood={mood} nickname={nickname} finalParts={finalParts} setFinalParts={setFinalParts} /> : <PublicSpace nickname={nickname} finalParts={finalParts} realWeather={realWeather} />}
                             </Layout>
                         )}
 

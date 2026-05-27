@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 
 <head>
@@ -640,7 +640,7 @@
         }
 
         // 個人盆栽佈置 (種植系統) Modal
-        function PlantingModal({ onClose, nickname }) {
+        function PlantingModal({ onClose, nickname, isPersonal }) {
             const [imageLoaded, setImageLoaded] = useState(false);
             const [plantWater, setPlantWater] = useState(() => {
                 const saved = safeStorage.getItem('plant_water', '45');
@@ -816,6 +816,15 @@
                         className="w-full max-w-5xl aspect-[16/9] bg-cover bg-center relative rounded-[32px] border-[4px] border-[#5A4E4D] shadow-2xl overflow-hidden select-none pointer-events-auto"
                         style={{ backgroundImage: 'url("./item/page/plant.png")' }}
                     >
+                        {/* Title Badge for Personal Mode */}
+                        {isPersonal && (
+                            <div
+                                className="absolute top-[3%] left-[3%] bg-[#FAF6F0] text-[#5A4E4D] border-[2px] border-[#5A4E4D] font-bold px-3 py-1 shadow-sm text-xs z-50 flex items-center gap-1.5"
+                                style={{ borderRadius: '15px 12px 14px 13px / 12px 14px 13px 15px' }}
+                            >
+                                <span>🏠</span> 個人空間：心靈盆栽
+                            </div>
+                        )}
                         {/* Back Button */}
                         <button
                             onClick={onClose}
@@ -1148,6 +1157,251 @@
             );
         }
 
+        // 記步任務與里程挑戰 Modal
+        function PedometerModal({
+            onClose,
+            initialSteps,
+            onStepsChange,
+            initialBackpackItems,
+            onBackpackChange,
+            parentSensorActive,
+            parentStartPedometer
+        }) {
+            const [localSteps, setLocalSteps] = useState(() => {
+                const saved = safeStorage.getItem('pedometer_steps', '0');
+                return parseInt(saved, 10);
+            });
+            const steps = initialSteps !== undefined ? initialSteps : localSteps;
+            const setSteps = onStepsChange !== undefined ? onStepsChange : setLocalSteps;
+
+            const [localSensorActive, setLocalSensorActive] = useState(false);
+            const sensorActive = parentSensorActive !== undefined ? parentSensorActive : localSensorActive;
+
+            const [backpackItems, setBackpackItems] = useState(() => {
+                if (initialBackpackItems !== undefined) return initialBackpackItems;
+                const defaultItems = {
+                    seed_cotton: 3,
+                    seed_lavender: 5,
+                    seed_hydrangea: 2
+                };
+                const saved = safeStorage.getItem('backpack_items', JSON.stringify(defaultItems));
+                try {
+                    return JSON.parse(saved);
+                } catch (e) {
+                    return defaultItems;
+                }
+            });
+            const [localToast, setLocalToast] = useState('');
+
+            const runningAvg = useRef(0);
+            const lastStepTime = useRef(0);
+            const motionListenerRef = useRef(null);
+
+            const mileage = (steps * 0.00075).toFixed(2);
+
+            useEffect(() => {
+                safeStorage.setItem('backpack_items', JSON.stringify(backpackItems));
+                if (onBackpackChange) {
+                    onBackpackChange(backpackItems);
+                }
+            }, [backpackItems]);
+
+            useEffect(() => {
+                safeStorage.setItem('pedometer_steps', steps.toString());
+                if (onStepsChange) {
+                    onStepsChange(steps);
+                }
+            }, [steps]);
+
+            const triggerToast = (msg) => {
+                setLocalToast(msg);
+                setTimeout(() => setLocalToast(''), 3000);
+            };
+
+            const startPedometer = () => {
+                if (parentStartPedometer) {
+                    parentStartPedometer();
+                    return;
+                }
+                if (sensorActive) return;
+
+                if (typeof window.DeviceMotionEvent !== 'undefined') {
+                    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                        DeviceMotionEvent.requestPermission()
+                            .then(permissionState => {
+                                if (permissionState === 'granted') {
+                                    registerMotionListener();
+                                } else {
+                                    triggerToast("計步感測器授權失敗，可使用模擬按鈕累積步數。");
+                                }
+                            })
+                            .catch(err => {
+                                console.error("DeviceMotion permission error:", err);
+                                triggerToast("啟動感測器出錯，可使用模擬按鈕。");
+                            });
+                    } else {
+                        registerMotionListener();
+                    }
+                } else {
+                    triggerToast("此裝置不支援計步感測器，可使用模擬按鈕。");
+                }
+            };
+
+            const registerMotionListener = () => {
+                if (motionListenerRef.current) return;
+
+                const handleMotion = (event) => {
+                    const acc = event.accelerationIncludingGravity || event.acceleration;
+                    if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
+
+                    const mag = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+                    const now = Date.now();
+
+                    if (runningAvg.current === 0) {
+                        runningAvg.current = mag;
+                    } else {
+                        runningAvg.current = runningAvg.current * 0.9 + mag * 0.1;
+                    }
+
+                    const delta = Math.abs(mag - runningAvg.current);
+                    if (delta > 2.2 && (now - lastStepTime.current > 350)) {
+                        lastStepTime.current = now;
+                        setSteps(prev => prev + 1);
+                    }
+                };
+
+                window.addEventListener('devicemotion', handleMotion, true);
+                motionListenerRef.current = handleMotion;
+                setLocalSensorActive(true);
+                triggerToast("🟢 計步感測器啟動成功！");
+            };
+
+            useEffect(() => {
+                return () => {
+                    if (motionListenerRef.current) {
+                        window.removeEventListener('devicemotion', motionListenerRef.current, true);
+                    }
+                };
+            }, []);
+
+            return (
+                <div className="fixed inset-0 bg-[#A5C4D4]/50 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                    {localToast && (
+                        <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-[#FFF4CE] text-[#5A4E4D] border-[3px] border-[#5A4E4D] px-6 py-3 font-bold rounded-full shadow-lg z-[999] animate-bounce-short" style={{ borderRadius: '255px 15px 225px 15px/15px 225px 15px 255px' }}>
+                            ✨ {localToast}
+                        </div>
+                    )}
+                    <div className="bg-[#FAF8F5] w-full max-w-md rounded-[24px] border-[3px] border-[#5A4E4D] p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden"
+                        style={{ borderRadius: '24px 20px 24px 22px / 20px 24px 22px 24px' }}>
+
+                        {/* Close Button */}
+                        <button
+                            onClick={onClose}
+                            className="absolute top-4 right-4 text-3xl font-bold text-[#5A7A94] opacity-50 hover:opacity-100 hover:scale-110 transition-all z-10"
+                        >
+                            ✖
+                        </button>
+
+                        <h2 className="text-2xl font-bold mb-2 text-center text-primary">👟 記步任務與里程挑戰</h2>
+                        <p className="text-xs text-center opacity-80 font-bold mb-4">累積每日步伐，兌換種子道具</p>
+
+                        {/* Sensor Status Card */}
+                        <div className="bg-[#FAF6F0] border-2 border-[#5A4E4D] rounded-2xl p-3 mb-4 text-left shadow-inner flex justify-between items-center">
+                            <div>
+                                <span className="text-[10px] font-bold text-primary/60 block">計步器狀態</span>
+                                <span className="text-xs font-bold text-primary">
+                                    {sensorActive ? "🟢 感測器已啟動 (偵測中)" : "🟡 感測器未啟動"}
+                                </span>
+                            </div>
+                            {!sensorActive && (
+                                <button
+                                    onClick={startPedometer}
+                                    className="px-3 py-1 bg-[#FFF4CE] text-[#5A4E4D] border border-[#5A4E4D] font-bold text-[10px] rounded-full hover:bg-[#F9E596] active:scale-95 transition-all shadow-sm"
+                                >
+                                    🔋 啟動手機感測器
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Step & Mileage Giant Display */}
+                        <div className="bg-white border-[3px] border-[#5A4E4D] p-4 rounded-3xl mb-4 text-center shadow-md relative">
+                            <div className="text-xs font-bold text-primary/60">目前累積</div>
+                            <div className="text-4xl font-extrabold text-accent my-2 tracking-wide">
+                                {steps} <span className="text-lg font-bold text-primary/80">步</span>
+                            </div>
+                            <div className="text-sm font-bold text-[#5A4E4D]">
+                                里程數：<span className="text-lg font-extrabold">{mileage}</span> 公里
+                            </div>
+                        </div>
+
+                        {/* Goal Progress Bar */}
+                        <div className="mb-4">
+                            <div className="flex justify-between items-center text-[10px] font-bold text-primary/60 mb-1 px-1">
+                                <span>今日目標 (5,000 步)</span>
+                                <span>{Math.min(100, Math.round((steps / 5000) * 100))}%</span>
+                            </div>
+                            <div className="w-full bg-[#E5DCD3] h-4 rounded-full border-2 border-[#5A4E4D] overflow-hidden shadow-inner">
+                                <div
+                                    className="bg-[#81C784] h-full transition-all duration-500"
+                                    style={{ width: `${Math.min(100, (steps / 5000) * 100)}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Simulator/Manual add steps */}
+                        <div className="flex gap-2 mb-4">
+                            <button
+                                onClick={() => {
+                                    setSteps(prev => prev + 100);
+                                }}
+                                className="w-full py-2 bg-white text-primary border-2 border-[#5A4E4D] font-bold text-xs rounded-full hover:bg-beige transition-all shadow-sm"
+                            >
+                                🚶 模擬漫步 (+100 步)
+                            </button>
+                        </div>
+
+                        {/* Reward Exchange Panel */}
+                        <div className="bg-[#FAF8F5] p-3 rounded-2xl border-2 border-[#5A4E4D] shadow-sm flex-1 flex flex-col justify-start">
+                            <span className="text-xs font-bold text-primary block mb-2 border-b border-[#5A4E4D]/10 pb-1 text-left">
+                                🎁 消耗步數兌換種子：
+                            </span>
+                            <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1 pr-1">
+                                {[
+                                    { id: 'seed_cotton', name: '🌾 棉花種子', cost: 50 },
+                                    { id: 'seed_lavender', name: '🪻 薰衣草種子', cost: 100 },
+                                    { id: 'seed_hydrangea', name: '🌸 繡球花種子', cost: 150 },
+                                ].map(reward => (
+                                    <div key={reward.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-[#DCEAF2] shadow-sm">
+                                        <div className="flex flex-col text-left">
+                                            <span className="text-xs font-bold text-primary">{reward.name}</span>
+                                            <span className="text-[9px] font-bold text-primary/50">花費 {reward.cost} 步</span>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                if (steps < reward.cost) {
+                                                    triggerToast("步數不足，快去散步累積里程吧！");
+                                                    return;
+                                                }
+                                                setSteps(prev => prev - reward.cost);
+                                                setBackpackItems(prev => ({
+                                                    ...prev,
+                                                    [reward.id]: (prev[reward.id] || 0) + 1
+                                                }));
+                                                triggerToast(`成功兌換 1 顆${reward.name.split(' ')[1]}！已放入背包`);
+                                            }}
+                                            className="px-3 py-1 bg-[#FFF4CE] hover:bg-[#F9E596] text-[#5A4E4D] border border-[#5A4E4D] font-bold text-[10px] rounded-full active:scale-95 transition-all shadow-sm"
+                                        >
+                                            兌換
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         // 廣場 2D 場景組件（取代原本 3D WebGL 旋轉樹景）
         function PlazaScene() {
             const [poseImage, setPoseImage] = useState('');
@@ -1397,7 +1651,7 @@
                     </div>
 
                     <button
-                        onClick={() => onSubmit()}
+                        onClick={() => onSubmit(weather)}
                         className="hand-drawn-btn px-10 py-4 text-xl font-bold z-30 bg-[#C8DEED] hover:bg-[#B3CDE0] w-full max-w-[280px]"
                     >
                         完成並查看今日分析
@@ -1406,30 +1660,204 @@
             );
         }
 
-        function MoodAnalysis({ mood, onSubmit }) {
+        function MoodAnalysis({ mood, weather, onSubmit }) {
             const moodNum = Number(mood);
-            const analysisText = moodNum >= 8 ? "你今天充滿活力！很適合到廣場去幫助其他人的植物澆水喔！"
-                : moodNum >= 5 ? "心情平穩的一天。去避難所聽些白噪音放鬆一下吧。"
-                    : "看起來有點低落呢... 推薦完成每日的「閱讀小語」任務，或是聽點療癒音樂。";
+            const percentage = Math.round(((moodNum - 1) / 9) * 100);
+
+            // Determine categories based on selected weather symbol
+            let category = 'sun'; // sun, cloud, rain, snow
+            if (['☀️', '🌤️', '🌈'].includes(weather)) {
+                category = 'sun';
+            } else if (['☁️', '🌫️', '💨'].includes(weather)) {
+                category = 'cloud';
+            } else if (['🌧️', '⛈️', '🌪️', '🌀'].includes(weather)) {
+                category = 'rain';
+            } else if (['❄️', '🌨️'].includes(weather)) {
+                category = 'snow';
+            } else {
+                category = 'sun'; // fallback
+            }
+
+            const analysisData = {
+                sun: {
+                    high: {
+                        food: '🍋 蜂蜜檸檬塔',
+                        foodDesc: '酸甜的滋味完美襯托你陽光般的心情！',
+                        music: '🎵 《Sunshine Walk》',
+                        musicDesc: '輕快的烏克麗麗旋律，伴隨你的腳步起舞。',
+                        story: '今天的你就像剛探出雲層的陽光，溫暖且耀眼。連路邊的小草都在向你招手，試著對鏡子裡的自己展現一個大大的微笑吧！'
+                    },
+                    medium: {
+                        food: '🥞 焦糖布丁鬆餅',
+                        foodDesc: '軟綿溫熱，帶來微甜的舒心感。',
+                        music: '🎵 《Cozy Breeze》',
+                        musicDesc: '溫柔的木吉他彈奏，讓午後時光更加愜意。',
+                        story: '微風輕拂，陽光剛好。你的心情就像是一朵在溫暖日光下慢慢舒展的花朵，不需要太急促，享受當下的節奏就很好。'
+                    },
+                    low: {
+                        food: '🍯 熱洋甘菊蜂蜜茶',
+                        foodDesc: '溫溫的茶湯能輕輕安撫緊繃的心靈。',
+                        music: '🎵 《Raindrops & Sunbeams》',
+                        musicDesc: '鋼琴與雨聲的交織，輕輕擁抱疲憊的你。',
+                        story: '雖然外面陽光普照，但心裡可能下著毛毛雨。別擔心，這也是調整腳步的好契機。喝杯熱茶，給自己一個大大的擁抱吧。'
+                    }
+                },
+                cloud: {
+                    high: {
+                        food: '🍵 靜岡抹茶歐蕾',
+                        foodDesc: '濃郁抹香伴隨細緻奶泡，帶給您平靜中的雀躍。',
+                        music: '🎵 《Cloudy Playground》',
+                        musicDesc: '輕Lo-fi節奏，與翻滾的雲朵一同漫遊。',
+                        story: '即使天空被雲朵覆蓋，你心中的暖陽依然在閃閃發光！今天你的能量很適合分給身邊的人，去留言板留下溫暖的字句吧。'
+                    },
+                    medium: {
+                        food: '🧁 伯爵茶瑪德蓮',
+                        foodDesc: '淡淡的佛手柑香氣，最適合多雲的平靜午後。',
+                        music: '🎵 《Floating Cloud》',
+                        musicDesc: '空靈的鋼琴獨奏，像是一個人在雲端漫步。',
+                        story: '天空有些陰沉，但這也是最好的閱讀與沉思時刻。給自己一點獨處的時間，寫下心裡的想法，也是一種很好的自我對話。'
+                    },
+                    low: {
+                        food: '🍫 濃情熱可可佐棉花糖',
+                        foodDesc: '融化的棉花糖與香濃巧克力，是心靈的最佳避難所。',
+                        music: '🎵 《Soft Pillow》',
+                        musicDesc: '溫暖舒緩的白噪音音樂，伴你入眠。',
+                        story: '霧氣籠罩時，看不清方向也沒關係。停下來，在原地稍微休息一下。今天不勉強自己前進，也是很棒的成就喔。'
+                    }
+                },
+                rain: {
+                    high: {
+                        food: '🥘 暖心番茄蔬菜湯',
+                        foodDesc: '熱騰騰的番茄酸甜，在雨天暖胃又暖心。',
+                        music: '🎵 《Singing in the Rain》',
+                        musicDesc: '活潑的爵士樂，讓雨滴化身跳動的音符。',
+                        story: '外頭下著大雨，但你心中卻開出了一朵美麗的彩虹花！把這份雨天的活力帶到公共空間，和小水滴一起踩水坑玩耍吧！'
+                    },
+                    medium: {
+                        food: '🍠 烤焦糖地瓜',
+                        foodDesc: '甜美綿密的熱地瓜，是雨天最質樸的陪伴。',
+                        music: '🎵 《Rainy Cafe》',
+                        musicDesc: '伴隨輕柔鋼琴的爵士鋼琴與細雨聲。',
+                        story: '雨水正滴滴答答地拍打著窗戶，像是大自然專屬的催眠曲。聽著雨聲，做個深呼吸，感受此時此刻的平靜與安全感。'
+                    },
+                    low: {
+                        food: '🍜 經典日式柴魚拉麵',
+                        foodDesc: '濃郁熱湯，一口下去便洗淨了所有寒冷與委屈。',
+                        music: '🎵 《Healing Raindrops》',
+                        musicDesc: '深度放鬆的療癒缽與雨聲，洗滌心靈負擔。',
+                        story: '雷雨交加的日子，心裡也跟著潮濕了起來。沒關係，雨總會停的。現在請躲在被窩裡，聽著音樂，讓悲傷隨著雨水一起被沖刷走吧。'
+                    }
+                },
+                snow: {
+                    high: {
+                        food: '🥧 肉桂烤蘋果塔',
+                        foodDesc: '熱呼呼的肉桂香氣，溫暖了冰雪世界。',
+                        music: '🎵 《Winter Sparkle》',
+                        musicDesc: '水晶音樂般輕透的旋律，充滿節慶的歡樂感。',
+                        story: '雪花紛飛中，你的熱情可以融化寒冬！今天好運連連，快去嘗試你一直想做的事，幸福的魔法正在圍繞著你。'
+                    },
+                    medium: {
+                        food: '🫖 鮮奶煮黑糖珍珠奶茶',
+                        foodDesc: '溫熱甜香，黑糖的暖意在舌尖化開。',
+                        music: '🎵 《Snowy Cabin》',
+                        musicDesc: '壁爐柴火燃燒的劈啪聲與溫馨純音樂。',
+                        story: '靜謐的銀白世界，最適合泡一杯暖呼呼的熱飲，靜靜看著窗外雪花飄落。世界慢了下來，你的心也跟著安定了下來。'
+                    },
+                    low: {
+                        food: '🥣 暖胃薑汁黑糖紅豆湯',
+                        foodDesc: '熱辣的薑汁與香甜紅豆，瞬間驅散體內寒氣。',
+                        music: '🎵 《Winter Sleep》',
+                        musicDesc: '溫柔的搖籃曲，伴你沉入安穩的夢鄉。',
+                        story: '寒冷的日子裡，心好像也跟著凍結了。別忘了，厚厚的雪被下正孕育著春天的種子。好好蓋被子休息，等待陽光再次照耀。'
+                    }
+                }
+            };
+
+            let level = 'medium';
+            if (moodNum >= 8) level = 'high';
+            else if (moodNum <= 4) level = 'low';
+
+            const matched = analysisData[category][level];
 
             return (
-                <div className="flex flex-col items-center justify-center h-full p-6">
-                    <div className="bg-white p-8 hand-drawn max-w-sm w-full shadow-xl text-left">
-                        <h2 className="text-3xl font-bold mb-6 text-center">個人圖表分析</h2>
-                        <div className="bg-beige p-5 hand-drawn-border mb-6">
-                            <h3 className="font-bold text-xl mb-2 text-accent bg-primary inline-block px-2 py-1 rounded">心情解析</h3>
-                            <p className="text-lg font-bold mt-2">{analysisText}</p>
+                <div
+                    className="absolute inset-0 w-full h-full bg-[#A5C4D4]/80 backdrop-blur-md z-50 flex flex-col items-center justify-center p-4 overflow-y-auto"
+                >
+                    {/* Cute hand-drawn sticky note */}
+                    <div
+                        className="bg-[#F9F7F3] p-6 md:p-8 text-left w-full max-w-sm relative z-30 animate-bounce-short"
+                        style={{
+                            border: '3px solid #5A4E4D',
+                            borderRadius: '24px 20px 24px 22px / 20px 24px 22px 24px',
+                            boxShadow: '6px 6px 0px #5A4E4D'
+                        }}
+                    >
+                        {/* Title with hand-written vibe */}
+                        <div className="text-center mb-5 border-b-2 border-dashed border-[#5A4E4D]/20 pb-3">
+                            <h2 className="text-xl md:text-2xl font-bold text-[#5A7A94] tracking-wide flex items-center justify-center gap-2">
+                                <span>🌈</span> 今日心情分析報告
+                            </h2>
+                            <p className="text-[10px] text-[#5A4E4D]/60 mt-0.5 font-semibold">RAINY GOGO HEALING REPORT</p>
                         </div>
-                        <div className="bg-beige p-5 hand-drawn-border mb-8">
-                            <h3 className="font-bold text-xl mb-2 text-accent bg-primary inline-block px-2 py-1 rounded">推薦活動</h3>
-                            <ul className="list-disc list-inside text-lg font-bold mt-2 space-y-2">
-                                {moodNum < 5 && <li>📖 閱讀療癒小語</li>}
-                                <li>🎵 聆聽白噪音音樂</li>
-                                <li>🌱 到廣場澆水施肥</li>
-                            </ul>
+
+                        {/* Summary badge */}
+                        <div className="flex items-center justify-between bg-white border-2 border-[#5A4E4D] p-3 rounded-2xl mb-4 shadow-sm">
+                            <div className="flex items-center gap-2">
+                                <span className="text-4xl filter drop-shadow-sm">{weather || '☀️'}</span>
+                                <div>
+                                    <div className="text-[9px] text-[#5A4E4D]/60 font-bold">心情氣象</div>
+                                    <div className="font-bold text-[#5A4E4D] text-xs">與當下共鳴的符號</div>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-[9px] text-[#5A4E4D]/60 font-bold">幸福體感度</div>
+                                <div className="text-xl font-black text-accent">{percentage}%</div>
+                            </div>
                         </div>
-                        <button onClick={onSubmit} className="hand-drawn-btn w-full py-4 text-xl font-bold">
-                            領取簽到獎勵
+
+                        <div className="space-y-4 mb-5">
+                            {/* Analysis text */}
+                            <div className="bg-[#FFFCEF] border-2 border-[#5A4E4D] p-4 rounded-2xl relative shadow-sm" style={{ borderRadius: '15px 12px 14px 15px / 12px 14px 13px 15px' }}>
+                                <div className="absolute -top-3 left-4 bg-[#FFF4CE] border border-[#5A4E4D] px-2 py-0.5 text-[9px] font-black text-[#5A4E4D] rounded-full">
+                                    📖 每日溫馨小語
+                                </div>
+                                <p className="text-xs font-bold text-[#5A4E4D] leading-relaxed pt-1">
+                                    {matched.story}
+                                </p>
+                            </div>
+
+                            {/* Food and Music split */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Food recommendation */}
+                                <div className="bg-white border-2 border-[#5A4E4D] p-3 rounded-2xl flex flex-col justify-between hover:bg-beige/40 transition-colors shadow-sm" style={{ borderRadius: '14px 15px 12px 13px / 12px 13px 14px 15px' }}>
+                                    <div>
+                                        <div className="text-[9px] font-bold text-[#A78BFA] mb-1">🥧 療癒美食</div>
+                                        <div className="font-bold text-[11px] text-[#5A4E4D] mb-1 leading-tight">{matched.food}</div>
+                                    </div>
+                                    <div className="text-[9px] text-[#5A4E4D]/70 font-semibold leading-tight">{matched.foodDesc}</div>
+                                </div>
+
+                                {/* Music recommendation */}
+                                <div className="bg-white border-2 border-[#5A4E4D] p-3 rounded-2xl flex flex-col justify-between hover:bg-beige/40 transition-colors shadow-sm" style={{ borderRadius: '15px 14px 13px 12px / 13px 12px 15px 14px' }}>
+                                    <div>
+                                        <div className="text-[9px] font-bold text-[#60A5FA] mb-1">🎵 推薦音樂</div>
+                                        <div className="font-bold text-[11px] text-[#5A4E4D] mb-1 leading-tight">{matched.music}</div>
+                                    </div>
+                                    <div className="text-[9px] text-[#5A4E4D]/70 font-semibold leading-tight">{matched.musicDesc}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Submit button with wobbly lines */}
+                        <button
+                            onClick={onSubmit}
+                            className="w-full py-3 bg-[#FFF4CE] hover:bg-[#F9E596] text-[#5A4E4D] border-[2.5px] border-[#5A4E4D] font-bold text-base hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-md"
+                            style={{
+                                borderRadius: '52% 48% 51% 49% / 51% 49% 52% 48%',
+                                boxShadow: '0px 3px 0px #5A4E4D'
+                            }}
+                        >
+                            領取今日簽到獎勵 🎁
                         </button>
                     </div>
                 </div>
@@ -1991,6 +2419,7 @@
             const [avatarModal, setAvatarModal] = useState(null);
             const [customizerTab, setCustomizerTab] = useState('face'); // New state for customizer
             const [showProfileStats, setShowProfileStats] = useState(false); // New state for dropdown
+            const [showPersonalFeatures, setShowPersonalFeatures] = useState(false); // Modal state for personal space features
 
             // Avatar parts state
             const [tempParts, setTempParts] = useState({});
@@ -2417,6 +2846,10 @@
                                     <span className="text-lg">{percentage}% <span className="text-xs opacity-70 font-normal">水分子</span></span>
                                 </div>
                                 <button
+                                    onClick={() => {
+                                        setShowProfileStats(false);
+                                        setShowPersonalFeatures(true);
+                                    }}
                                     className="mt-2 w-full py-2 bg-[#FFF4CE] text-[#5A4E4D] border-[2px] border-[#5A4E4D] font-bold text-sm hover:bg-[#F9E596] hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-sm"
                                     style={{ borderRadius: '52% 48% 51% 49% / 51% 49% 52% 48%' }}
                                 >
@@ -2499,6 +2932,12 @@
                     )}
 
                     {renderAvatarModal()}
+
+                    {showPersonalFeatures && (
+                        <PedometerModal
+                            onClose={() => setShowPersonalFeatures(false)}
+                        />
+                    )}
                 </div>
             );
         }
@@ -2512,6 +2951,97 @@
             const [selectedItem, setSelectedItem] = useState(null);
             const [toastMessage, setToastMessage] = useState('');
             const [showPlanting, setShowPlanting] = useState(false);
+
+            // Real weather state
+            const [realWeather, setRealWeather] = useState({
+                city: '未知地區',
+                temp: '--',
+                desc: '定位中...',
+                icon: '🔍',
+                loading: true,
+                error: false
+            });
+
+            useEffect(() => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                            const { latitude, longitude } = position.coords;
+                            try {
+                                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&timezone=auto`);
+                                const weatherData = await weatherRes.json();
+
+                                let cityName = '未知地區';
+                                try {
+                                    const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10`, {
+                                        headers: {
+                                            'Accept-Language': 'zh-TW,zh;q=0.9'
+                                        }
+                                    });
+                                    const geoData = await geoRes.json();
+                                    cityName = geoData.address.city || geoData.address.town || geoData.address.suburb || geoData.address.district || geoData.address.county || '您的位置';
+                                } catch (e) {
+                                    console.error("Reverse geocode failed", e);
+                                    cityName = `經度:${longitude.toFixed(2)} 緯度:${latitude.toFixed(2)}`;
+                                }
+
+                                const code = weatherData.current_weather.weathercode;
+                                const temp = Math.round(weatherData.current_weather.temperature);
+
+                                let desc = '陰天';
+                                let icon = '☁️';
+                                if (code === 0) { desc = '晴天'; icon = '☀️'; }
+                                else if (code >= 1 && code <= 3) { desc = '多雲時晴'; icon = '🌤️'; }
+                                else if (code === 45 || code === 48) { desc = '有霧'; icon = '🌫️'; }
+                                else if ((code >= 51 && code <= 55) || (code >= 80 && code <= 82)) { desc = '陣雨'; icon = '🌧️'; }
+                                else if (code >= 61 && code <= 65) { desc = '雨天'; icon = '🌧️'; }
+                                else if (code >= 71 && code <= 77) { desc = '下雪'; icon = '❄️'; }
+                                else if (code >= 95 && code <= 99) { desc = '雷雨'; icon = '⛈️'; }
+
+                                setRealWeather({
+                                    city: cityName,
+                                    temp: temp,
+                                    desc: desc,
+                                    icon: icon,
+                                    loading: false,
+                                    error: false
+                                });
+                            } catch (err) {
+                                console.error("Fetch weather failed", err);
+                                setRealWeather({
+                                    city: '未知地區',
+                                    temp: '22',
+                                    desc: '天氣資料讀取失敗 (預設台北雨天)',
+                                    icon: '🌧️',
+                                    loading: false,
+                                    error: true
+                                });
+                            }
+                        },
+                        (error) => {
+                            console.error("Geolocation failed", error);
+                            setRealWeather({
+                                city: '未知地區',
+                                temp: '22',
+                                desc: '定位遭拒 (預設台北雨天)',
+                                icon: '🌧️',
+                                loading: false,
+                                error: true
+                            });
+                        },
+                        { enableHighAccuracy: true, timeout: 8000 }
+                    );
+                } else {
+                    setRealWeather({
+                        city: '未開定位',
+                        temp: '22',
+                        desc: '瀏覽器不支援定位 (預設台北雨天)',
+                        icon: '🌧️',
+                        loading: false,
+                        error: true
+                    });
+                }
+            }, []);
 
             // 背包中種子的數量狀態
             const [backpackItems, setBackpackItems] = useState(() => {
@@ -3049,7 +3579,9 @@
                                 {activeTab === 'plaza' ? (
                                     <div className="pointer-events-auto">
                                         <h2 className="text-2xl md:text-3xl font-bold mb-2 text-accent">廣場 (虛擬室外)</h2>
-                                        <p className="mb-4 text-sm md:text-lg font-bold">真實氣象：目前為雨天 🌧️ / 探索社交與種植。</p>
+                                        <p className="mb-4 text-sm md:text-lg font-bold">
+                                            真實氣象：{realWeather.loading ? '定位中... 📡' : `${realWeather.city}，當前氣溫 ${realWeather.temp}°C，${realWeather.desc} ${realWeather.icon}`}
+                                        </p>
                                         <div className="grid grid-cols-2 gap-3">
                                             <button
                                                 onClick={() => setShowPlanting(true)}
@@ -3181,127 +3713,15 @@
 
                     {/* 記步任務與里程挑戰 Modal */}
                     {showPedometer && (
-                        <div className="fixed inset-0 bg-[#A5C4D4]/50 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-                            <div className="bg-[#FAF8F5] w-full max-w-md rounded-[24px] border-[3px] border-[#5A4E4D] p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden"
-                                style={{ borderRadius: '24px 20px 24px 22px / 20px 24px 22px 24px' }}>
-
-                                {/* Close Button */}
-                                <button
-                                    onClick={() => {
-                                        setShowPedometer(false);
-                                    }}
-                                    className="absolute top-4 right-4 text-3xl font-bold text-[#5A7A94] opacity-50 hover:opacity-100 hover:scale-110 transition-all z-10"
-                                >
-                                    ✖
-                                </button>
-
-                                <h2 className="text-2xl font-bold mb-2 text-center text-primary">👟 記步任務與里程挑戰</h2>
-                                <p className="text-xs text-center opacity-80 font-bold mb-4">累積每日步伐，兌換種子道具</p>
-
-                                {/* Sensor Status Card */}
-                                <div className="bg-[#FAF6F0] border-2 border-[#5A4E4D] rounded-2xl p-3 mb-4 text-left shadow-inner flex justify-between items-center">
-                                    <div>
-                                        <span className="text-[10px] font-bold text-primary/60 block">計步器狀態</span>
-                                        <span className="text-xs font-bold text-primary">
-                                            {sensorActive ? "🟢 感測器已啟動 (偵測中)" : "🟡 感測器未啟動"}
-                                        </span>
-                                    </div>
-                                    {!sensorActive && (
-                                        <button
-                                            onClick={startPedometer}
-                                            className="px-3 py-1 bg-[#FFF4CE] text-[#5A4E4D] border border-[#5A4E4D] font-bold text-[10px] rounded-full hover:bg-[#F9E596] active:scale-95 transition-all shadow-sm"
-                                        >
-                                            🔋 啟動手機感測器
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Step & Mileage Giant Display */}
-                                <div className="bg-white border-[3px] border-[#5A4E4D] p-4 rounded-3xl mb-4 text-center shadow-md relative">
-                                    <div className="text-xs font-bold text-primary/60">目前累積</div>
-                                    <div className="text-4xl font-extrabold text-accent my-2 tracking-wide">
-                                        {steps} <span className="text-lg font-bold text-primary/80">步</span>
-                                    </div>
-                                    <div className="text-sm font-bold text-[#5A4E4D]">
-                                        里程數：<span className="text-lg font-extrabold">{mileage}</span> 公里
-                                    </div>
-                                </div>
-
-                                {/* Goal Progress Bar */}
-                                <div className="mb-4">
-                                    <div className="flex justify-between items-center text-[10px] font-bold text-primary/60 mb-1 px-1">
-                                        <span>今日目標 (5,000 步)</span>
-                                        <span>{Math.min(100, Math.round((steps / 5000) * 100))}%</span>
-                                    </div>
-                                    <div className="w-full bg-[#E5DCD3] h-4 rounded-full border-2 border-[#5A4E4D] overflow-hidden shadow-inner">
-                                        <div
-                                            className="bg-[#81C784] h-full transition-all duration-500"
-                                            style={{ width: `${Math.min(100, (steps / 5000) * 100)}%` }}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Simulator/Manual add steps */}
-                                <div className="flex gap-2 mb-4">
-                                    <button
-                                        onClick={() => {
-                                            setSteps(prev => {
-                                                const next = prev + 100;
-                                                safeStorage.setItem('pedometer_steps', next.toString());
-                                                return next;
-                                            });
-                                        }}
-                                        className="w-full py-2 bg-white text-primary border-2 border-[#5A4E4D] font-bold text-xs rounded-full hover:bg-beige transition-all shadow-sm"
-                                    >
-                                        🚶 模擬漫步 (+100 步)
-                                    </button>
-                                </div>
-
-                                {/* Reward Exchange Panel */}
-                                <div className="bg-[#FAF8F5] p-3 rounded-2xl border-2 border-[#5A4E4D] shadow-sm flex-1 flex flex-col justify-start">
-                                    <span className="text-xs font-bold text-primary block mb-2 border-b border-[#5A4E4D]/10 pb-1 text-left">
-                                        🎁 消耗步數兌換種子：
-                                    </span>
-                                    <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1 pr-1">
-                                        {[
-                                            { id: 'seed_cotton', name: '🌾 棉花種子', cost: 50 },
-                                            { id: 'seed_lavender', name: '🪻 薰衣草種子', cost: 100 },
-                                            { id: 'seed_hydrangea', name: '🌸 繡球花種子', cost: 150 },
-                                        ].map(reward => (
-                                            <div key={reward.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-[#DCEAF2] shadow-sm">
-                                                <div className="flex flex-col text-left">
-                                                    <span className="text-xs font-bold text-primary">{reward.name}</span>
-                                                    <span className="text-[9px] font-bold text-primary/50">花費 {reward.cost} 步</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => {
-                                                        if (steps < reward.cost) {
-                                                            setToastMessage("步數不足，快去散步累積里程吧！");
-                                                            setTimeout(() => setToastMessage(''), 3000);
-                                                            return;
-                                                        }
-                                                        setSteps(prev => {
-                                                            const next = prev - reward.cost;
-                                                            safeStorage.setItem('pedometer_steps', next.toString());
-                                                            return next;
-                                                        });
-                                                        setBackpackItems(prev => ({
-                                                            ...prev,
-                                                            [reward.id]: (prev[reward.id] || 0) + 1
-                                                        }));
-                                                        setToastMessage(`成功兌換 1 顆${reward.name.split(' ')[1]}！已放入背包`);
-                                                        setTimeout(() => setToastMessage(''), 3000);
-                                                    }}
-                                                    className="px-3 py-1 bg-[#FFF4CE] hover:bg-[#F9E596] text-[#5A4E4D] border border-[#5A4E4D] font-bold text-[10px] rounded-full active:scale-95 transition-all shadow-sm"
-                                                >
-                                                    兌換
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        <PedometerModal
+                            onClose={() => setShowPedometer(false)}
+                            initialSteps={steps}
+                            onStepsChange={setSteps}
+                            initialBackpackItems={backpackItems}
+                            onBackpackChange={setBackpackItems}
+                            parentSensorActive={sensorActive}
+                            parentStartPedometer={startPedometer}
+                        />
                     )}
                 </div>
             );
@@ -3313,6 +3733,7 @@
             const [nickname, setNickname] = useState('');
             const [hasCheckedIn, setHasCheckedIn] = useState(false);
             const [mood, setMood] = useState(5);
+            const [weatherSymbol, setWeatherSymbol] = useState('☀️');
             const [rewards, setRewards] = useState({ seeds: 0, water: 0 });
             const [showModal, setShowModal] = useState(false);
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -3371,9 +3792,11 @@
                 }
             };
 
-            const handleMoodSubmit = () => {
-                setHasCheckedIn(true);
-                setStep('personal'); // Skip mood_analysis and go straight to personal space
+            const handleMoodSubmit = (selectedWeather) => {
+                if (selectedWeather) {
+                    setWeatherSymbol(selectedWeather);
+                }
+                setStep('mood_analysis');
             };
 
             const handleAnalysisSubmit = () => {
@@ -3408,7 +3831,10 @@
                             <MoodCheckIn mood={mood} setMood={setMood} onSubmit={handleMoodSubmit} nickname={nickname} />
                         )}
                         {step === 'mood_analysis' && (
-                            <MoodAnalysis mood={mood} onSubmit={handleAnalysisSubmit} />
+                            <>
+                                <MoodCheckIn mood={mood} setMood={setMood} onSubmit={handleMoodSubmit} nickname={nickname} />
+                                <MoodAnalysis mood={mood} weather={weatherSymbol} onSubmit={handleAnalysisSubmit} />
+                            </>
                         )}
 
                         {(step === 'personal' || step === 'public') && (
